@@ -1,78 +1,191 @@
 import streamlit as st
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+from st_aggrid.shared import JsCode
+import json
 
-# Define initial structure
-document_structure = {
-    "INTRODUZIONE": ["Management Summary", "Policy | Sistema Normativo Introduzione"],
-    "LINEE FONDAMENTALI": {
-        "A.1 PRINCIPI DI RIFERIMENTO": [
-            "Principi di riferimento del Sistema Normativo",
-            "Policy | Sistema Normativo Linee Fondamentali"
-        ],
-        "A.2 ARCHITETTURA E STRUMENTI": [
-            "Policy | Sistema Normativo Linee Fondamentali"
-        ]
+# Initialize session state for document structure
+if 'document_structure' not in st.session_state:
+    st.session_state.document_structure = {
+        "INTRODUZIONE": ["Management Summary", "Policy | Sistema Normativo Introduzione"],
+        "LINEE FONDAMENTALI": {
+            "A.1 PRINCIPI DI RIFERIMENTO": [
+                "Principi di riferimento del Sistema Normativo",
+                "Policy | Sistema Normativo Linee Fondamentali"
+            ],
+            "A.2 ARCHITETTURA E STRUMENTI": [
+                "Policy | Sistema Normativo Linee Fondamentali"
+            ]
+        }
     }
-}
 
-# Function to display document structure
-def display_structure(structure, parent_key=""):
+# Function to convert the nested dictionary to a list for AgGrid
+def dict_to_list(structure, parent=""):
+    rows = []
     for key, value in structure.items():
-        if isinstance(value, dict):  # Section with sub-sections
-            with st.expander(f"{parent_key}{key}"):
-                display_structure(value, parent_key=f"{parent_key}{key} > ")
-        else:  # Paragraphs
-            for paragraph in value:
-                st.markdown(f"- **{parent_key}{key}**: {paragraph}")
+        if isinstance(value, dict):
+            rows.append({"Section": parent + key, "Type": "Section"})
+            rows.extend(dict_to_list(value, parent + key + " > "))
+        else:
+            for para in value:
+                rows.append({"Section": parent + key, "Type": "Paragraph", "Content": para})
+    return rows
 
-# Function to edit document
-def edit_structure(structure, parent_key=""):
+# Function to display the document structure using AgGrid
+def display_structure_grid(structure):
+    data = dict_to_list(structure)
+    gb = GridOptionsBuilder.from_dataframe(
+        pd.DataFrame(data)
+    )
+    gb.configure_pagination(paginationAutoPageSize=True)
+    gb.configure_default_column(editable=False, sortable=True, filter=True)
+    gridOptions = gb.build()
+    
+    st.subheader("📑 Document Structure")
+    AgGrid(
+        pd.DataFrame(data),
+        gridOptions=gridOptions,
+        height=400,
+        update_mode=GridUpdateMode.NO_UPDATE,
+        allow_unsafe_jscode=True,
+    )
+
+# Function to edit the document structure
+def edit_structure_ui(structure, parent_key=""):
     updated_structure = {}
     for key, value in structure.items():
-        if isinstance(value, dict):  # Section with sub-sections
-            with st.expander(f"Edit {key}"):
-                updated_structure[key] = edit_structure(value)
-        else:  # Paragraphs
-            updated_paragraphs = []
-            st.subheader(f"Edit Section: {parent_key}{key}")
-            for i, paragraph in enumerate(value):
-                col1, col2, col3 = st.columns([6, 1, 1])
-                with col1:
-                    updated_paragraph = st.text_input(
-                        f"Edit Paragraph {i+1}", value=paragraph, key=f"{parent_key}{key}-{i}"
-                    )
-                    updated_paragraphs.append(updated_paragraph)
-                with col2:
-                    if st.button(f"Remove {i+1}", key=f"remove-{parent_key}{key}-{i}"):
-                        updated_paragraphs.pop()
-                with col3:
-                    if st.button(f"AI Suggest {i+1}", key=f"ai-{parent_key}{key}-{i}"):
-                        ai_prompt = st.text_input(
-                            f"Enter AI Prompt for {key} - Paragraph {i+1}", value=""
+        if isinstance(value, dict):
+            with st.expander(f"✏️ Edit Section: {parent_key}{key}", expanded=False):
+                updated_structure[key] = edit_structure_ui(value, parent_key=f"{parent_key}{key} > ")
+        else:
+            with st.container():
+                st.markdown(f"### 📝 Edit Section: {parent_key}{key}")
+                paragraphs = []
+                for i, paragraph in enumerate(value):
+                    col1, col2, col3 = st.columns([6, 1, 1])
+                    with col1:
+                        updated_paragraph = st.text_input(
+                            f"Paragraph {i+1}",
+                            value=paragraph,
+                            key=f"{parent_key}{key}-para-{i}"
                         )
-                        if ai_prompt:
-                            updated_paragraphs[i] = f"AI Response to '{ai_prompt}'"  # Placeholder for AI logic
-            if st.button(f"Add Paragraph to {key}", key=f"add-{parent_key}{key}"):
-                updated_paragraphs.append("New Paragraph")
-            updated_structure[key] = updated_paragraphs
+                        paragraphs.append(updated_paragraph)
+                    with col2:
+                        if st.button(f"🗑️ Remove", key=f"remove-{parent_key}{key}-{i}"):
+                            del st.session_state[f"{parent_key}{key}-para-{i}"]
+                            st.experimental_rerun()
+                    with col3:
+                        if st.button(f"🤖 AI Suggest", key=f"ai-{parent_key}{key}-{i}"):
+                            ai_prompt = st.text_input(
+                                f"Enter AI Prompt for {key} - Paragraph {i+1}",
+                                key=f"ai_prompt-{parent_key}{key}-{i}"
+                            )
+                            if ai_prompt:
+                                # Placeholder for AI logic
+                                ai_response = f"AI Response to '{ai_prompt}'"
+                                paragraphs[i] = ai_response
+                                st.success(f"AI suggested: {ai_response}")
+                if st.button(f"➕ Add Paragraph to {key}", key=f"add-{parent_key}{key}"):
+                    paragraphs.append("New Paragraph")
+                updated_structure[key] = paragraphs
     return updated_structure
 
-# Streamlit App
-st.title("Document Editing App")
-st.sidebar.header("Document Interaction")
-action = st.sidebar.radio("Choose Action", ["View Document", "Edit Document", "Add Section"])
+# Function to add a new section
+def add_section_ui():
+    with st.form(key='add_section_form'):
+        st.subheader("➕ Add New Section")
+        new_section_name = st.text_input("Section Name", key="new_section_name")
+        parent_section = st.selectbox(
+            "Select Parent Section (optional)",
+            options=[""] + list(st.session_state.document_structure.keys()),
+            key="parent_section_select",
+            help="Leave blank to add a top-level section."
+        )
+        submit = st.form_submit_button("Add Section")
+        if submit:
+            if parent_section:
+                if parent_section in st.session_state.document_structure:
+                    st.session_state.document_structure[parent_section][new_section_name] = []
+                    st.success(f"Section '{new_section_name}' added under '{parent_section}'!")
+                else:
+                    st.error("Selected parent section does not exist.")
+            else:
+                st.session_state.document_structure[new_section_name] = []
+                st.success(f"Top-level section '{new_section_name}' added!")
+            st.experimental_rerun()
+
+# Function to save the document structure to a JSON file
+def save_document():
+    with st.spinner("Saving document structure..."):
+        with open("document_structure.json", "w", encoding='utf-8') as f:
+            json.dump(st.session_state.document_structure, f, ensure_ascii=False, indent=4)
+    st.success("Document structure saved successfully!")
+
+# Function to load the document structure from a JSON file
+def load_document():
+    try:
+        with open("document_structure.json", "r", encoding='utf-8') as f:
+            st.session_state.document_structure = json.load(f)
+        st.success("Document structure loaded successfully!")
+    except FileNotFoundError:
+        st.error("No saved document structure found.")
+
+# Streamlit App Layout
+st.set_page_config(page_title="📄 Enhanced Document Editing App", layout="wide")
+st.title("📄 Enhanced Document Editing App")
+
+# Sidebar Navigation
+st.sidebar.header("Navigation")
+action = st.sidebar.radio(
+    "Choose Action",
+    ["View Document", "Edit Document", "Add Section", "Save Document", "Load Document"]
+)
 
 if action == "View Document":
-    st.header("Document Structure")
-    display_structure(document_structure)
+    display_structure_grid(st.session_state.document_structure)
 
 elif action == "Edit Document":
-    st.header("Edit Document Structure")
-    document_structure = edit_structure(document_structure)
-    st.success("Document updated successfully!")
+    st.header("✏️ Edit Document Structure")
+    with st.form(key='edit_form'):
+        st.session_state.document_structure = edit_structure_ui(st.session_state.document_structure)
+        submit_button = st.form_submit_button(label='Save Changes')
+        if submit_button:
+            st.success("📂 Document structure updated successfully!")
 
 elif action == "Add Section":
-    st.header("Add New Section")
-    new_section = st.text_input("Section Name", key="new-section")
-    if new_section and st.button("Add Section"):
-        document_structure[new_section] = []
-        st.success(f"Section '{new_section}' added!")
+    add_section_ui()
+
+elif action == "Save Document":
+    save_document()
+
+elif action == "Load Document":
+    load_document()
+
+# Custom CSS for better aesthetics
+st.markdown("""
+    <style>
+    /* Sidebar */
+    .css-1d391kg {
+        background-color: #f0f2f6;
+    }
+    /* Header */
+    .css-1aumxhk {
+        font-size: 2rem;
+        text-align: center;
+        color: #4B7BEC;
+    }
+    /* Buttons */
+    .stButton>button {
+        color: white;
+        background-color: #4B7BEC;
+    }
+    /* Expander */
+    .streamlit-expanderHeader {
+        font-weight: bold;
+        color: #4B7BEC;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# Import necessary libraries for AgGrid
+import pandas as pd
+
