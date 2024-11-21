@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from st_aggrid.shared import JsCode
 import json
@@ -33,16 +34,15 @@ def dict_to_list(structure, parent=""):
 # Function to display the document structure using AgGrid
 def display_structure_grid(structure):
     data = dict_to_list(structure)
-    gb = GridOptionsBuilder.from_dataframe(
-        pd.DataFrame(data)
-    )
+    df = pd.DataFrame(data)
+    gb = GridOptionsBuilder.from_dataframe(df)
     gb.configure_pagination(paginationAutoPageSize=True)
     gb.configure_default_column(editable=False, sortable=True, filter=True)
     gridOptions = gb.build()
     
     st.subheader("📑 Document Structure")
     AgGrid(
-        pd.DataFrame(data),
+        df,
         gridOptions=gridOptions,
         height=400,
         update_mode=GridUpdateMode.NO_UPDATE,
@@ -59,8 +59,8 @@ def edit_structure_ui(structure, parent_key=""):
         else:
             with st.container():
                 st.markdown(f"### 📝 Edit Section: {parent_key}{key}")
-                paragraphs = []
-                for i, paragraph in enumerate(value):
+                paragraphs = list(value)  # Make a copy to avoid mutation issues
+                for i, paragraph in enumerate(paragraphs):
                     col1, col2, col3 = st.columns([6, 1, 1])
                     with col1:
                         updated_paragraph = st.text_input(
@@ -68,10 +68,10 @@ def edit_structure_ui(structure, parent_key=""):
                             value=paragraph,
                             key=f"{parent_key}{key}-para-{i}"
                         )
-                        paragraphs.append(updated_paragraph)
+                        paragraphs[i] = updated_paragraph
                     with col2:
                         if st.button(f"🗑️ Remove", key=f"remove-{parent_key}{key}-{i}"):
-                            del st.session_state[f"{parent_key}{key}-para-{i}"]
+                            paragraphs.pop(i)
                             st.experimental_rerun()
                     with col3:
                         if st.button(f"🤖 AI Suggest", key=f"ai-{parent_key}{key}-{i}"):
@@ -102,48 +102,54 @@ def add_section_ui():
         )
         submit = st.form_submit_button("Add Section")
         if submit:
-            if parent_section:
-                if parent_section in st.session_state.document_structure:
-                    st.session_state.document_structure[parent_section][new_section_name] = []
-                    st.success(f"Section '{new_section_name}' added under '{parent_section}'!")
-                else:
-                    st.error("Selected parent section does not exist.")
+            if new_section_name.strip() == "":
+                st.error("Section name cannot be empty.")
             else:
-                st.session_state.document_structure[new_section_name] = []
-                st.success(f"Top-level section '{new_section_name}' added!")
-            st.experimental_rerun()
+                if parent_section:
+                    if parent_section in st.session_state.document_structure:
+                        st.session_state.document_structure[parent_section][new_section_name] = []
+                        st.success(f"Section '{new_section_name}' added under '{parent_section}'!")
+                    else:
+                        st.error("Selected parent section does not exist.")
+                else:
+                    st.session_state.document_structure[new_section_name] = []
+                    st.success(f"Top-level section '{new_section_name}' added!")
+                st.experimental_rerun()
 
 # Function to save the document structure to a JSON file
 def save_document():
     with st.spinner("Saving document structure..."):
-        with open("document_structure.json", "w", encoding='utf-8') as f:
-            json.dump(st.session_state.document_structure, f, ensure_ascii=False, indent=4)
-    st.success("Document structure saved successfully!")
+        try:
+            with open("document_structure.json", "w", encoding='utf-8') as f:
+                json.dump(st.session_state.document_structure, f, ensure_ascii=False, indent=4)
+            st.success("📂 Document structure saved successfully!")
+        except Exception as e:
+            st.error(f"Error saving document: {e}")
 
 # Function to load the document structure from a JSON file
 def load_document():
     try:
         with open("document_structure.json", "r", encoding='utf-8') as f:
             st.session_state.document_structure = json.load(f)
-        st.success("Document structure loaded successfully!")
+        st.success("📂 Document structure loaded successfully!")
     except FileNotFoundError:
         st.error("No saved document structure found.")
+    except json.JSONDecodeError:
+        st.error("Error decoding the JSON file. Please check the file format.")
+    except Exception as e:
+        st.error(f"Error loading document: {e}")
 
 # Streamlit App Layout
 st.set_page_config(page_title="📄 Enhanced Document Editing App", layout="wide")
 st.title("📄 Enhanced Document Editing App")
 
-# Sidebar Navigation
-st.sidebar.header("Navigation")
-action = st.sidebar.radio(
-    "Choose Action",
-    ["View Document", "Edit Document", "Add Section", "Save Document", "Load Document"]
-)
+# Main Navigation using Tabs
+tabs = st.tabs(["View Document", "Edit Document", "Add Section", "Save Document", "Load Document"])
 
-if action == "View Document":
+with tabs[0]:
     display_structure_grid(st.session_state.document_structure)
 
-elif action == "Edit Document":
+with tabs[1]:
     st.header("✏️ Edit Document Structure")
     with st.form(key='edit_form'):
         st.session_state.document_structure = edit_structure_ui(st.session_state.document_structure)
@@ -151,22 +157,18 @@ elif action == "Edit Document":
         if submit_button:
             st.success("📂 Document structure updated successfully!")
 
-elif action == "Add Section":
+with tabs[2]:
     add_section_ui()
 
-elif action == "Save Document":
+with tabs[3]:
     save_document()
 
-elif action == "Load Document":
+with tabs[4]:
     load_document()
 
 # Custom CSS for better aesthetics
 st.markdown("""
     <style>
-    /* Sidebar */
-    .css-1d391kg {
-        background-color: #f0f2f6;
-    }
     /* Header */
     .css-1aumxhk {
         font-size: 2rem;
@@ -185,7 +187,3 @@ st.markdown("""
     }
     </style>
     """, unsafe_allow_html=True)
-
-# Import necessary libraries for AgGrid
-import pandas as pd
-
